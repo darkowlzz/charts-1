@@ -14,11 +14,87 @@ jobs:
 
   e2e:
     machine: true
+      # image: circleci/classic:201808-01
+    environment:
+      K8S_VERSION: v1.10.0
+      KUBECONFIG: /home/circleci/.kube/config
+      MINIKUBE_VERSION: v0.29.0
+      MINIKUBE_WANTUPDATENOTIFICATION: false
+      MINIKUBE_WANTREPORTERRORPROMPT: false
+      MINIKUBE_HOME: /home/circleci
+      CHANGE_MINIKUBE_NONE_USER: true
     steps:
-      - run: sudo apt -y update
-      - run: sudo apt -y install linux-image-extra-$(uname -r)
-      - run: sudo mount --make-rshared /sys
-      - run: docker run --name enable_lio --privileged --rm --cap-add=SYS_ADMIN -v /lib/modules:/lib/modules -v /sys:/sys:rshared storageos/init:0.1
+      - checkout
+      - run:
+          name: enable LIO
+          command: |
+            sudo apt -y update
+            sudo apt -y install linux-image-extra-$(uname -r)
+            sudo mount --make-rshared /sys
+            docker run --name enable_lio --privileged --rm --cap-add=SYS_ADMIN -v /lib/modules:/lib/modules -v /sys:/sys:rshared storageos/init:0.1
+      - run:
+          name: setup kubectl
+          command: |
+            curl -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/${K8S_VERSION}/bin/linux/amd64/kubectl && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+            mkdir -p ${HOME}/.kube
+            touch ${HOME}/.kube/config
+      - run:
+          name: setup minikube
+          command: |
+            curl -Lo minikube https://github.com/kubernetes/minikube/releases/download/${MINIKUBE_VERSION}/minikube-linux-amd64 && chmod +x minikube && sudo mv minikube /usr/local/bin/
+      - run:
+          name: setup helm
+          command: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get | bash
+      - run:
+          name: start minikube
+          command: |
+            sudo -E minikube start --vm-driver=none --cpus 2 --memory 2048 --kubernetes-version=${K8S_VERSION} &> $HOME/minikube.log 2>&1 < /dev/null
+      - run:
+          name: wait for minikube
+          command: |
+            JSONPATH='{range .items[*]}{@.metadata.name}:{range @.status.conditions[*]}{@.type}={@.status};{end}{end}';
+            until kubectl get nodes -o jsonpath="$JSONPATH" 2>&1 | grep -q "Ready=True"; do
+              sleep 1;
+            done
+      - run:
+          name: fix RBAC
+          command: |
+            # make default account cluster-admin
+            kubectl create clusterrolebinding add-on-cluster-admin --clusterrole cluster-admin --serviceaccount=kube-system:default
+      - run:
+          name: dump cluster-info
+          command: |
+            kubectl cluster-info
+            kubectl get po --all-namespaces
+      - run:
+          name: install helm in cluster
+          command: |
+            kubectl -n kube-system create sa tiller
+            kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
+            helm init --wait --service-account tiller
+
+      # - run:
+      #     name: install minikube
+      #     command: |
+      #       curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && chmod +x minikube && sudo cp minikube /usr/local/bin/ && rm minikube
+      #       curl -Lo kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl && chmod +x kubectl && sudo cp kubectl /usr/local/bin/ && rm kubectl
+      #       export MINIKUBE_WANTUPDATENOTIFICATION=false
+      #       export MINIKUBE_WANTREPORTERRORPROMPT=false
+      #       export MINIKUBE_HOME=$HOME
+      #       export CHANGE_MINIKUBE_NONE_USER=true
+      #       mkdir -p $HOME/.kube
+      #       mkdir -p $HOME/.minikube
+      #       touch $HOME/.kube/config
+      #       export KUBECONFIG=$HOME/.kube/config
+      #       sudo -E minikube start --vm-driver=none
+      #       for i in {1..150}; do # timeout for 5 minutes
+      #         kubectl get po &> /dev/null
+      #         if [ $? -ne 1 ]; then
+      #             break
+      #         fi
+      #         sleep 2
+      #       done
+
 
   deploy:
     docker:
