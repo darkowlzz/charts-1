@@ -12,6 +12,14 @@ jobs:
             git fetch storageos master
             chart_test.sh --config test/.testenv --no-install
 
+  e2e:
+    machine: true
+    steps:
+      - run: sudo apt -y update
+      - run: sudo apt -y install linux-image-extra-$(uname -r)
+      - run: sudo mount --make-rshared /sys
+      - run: docker run --name enable_lio --privileged --rm --cap-add=SYS_ADMIN -v /lib/modules:/lib/modules -v /sys:/sys:rshared storageos/init:0.1
+
   deploy:
     docker:
       - image: gcr.io/kubernetes-charts-ci/test-image:v2.0.5
@@ -24,9 +32,11 @@ workflows:
   build-and-deploy:
     jobs:
       - build
+      - e2e
       - deploy:
           requires:
             - build
+            - e2e
           filters:
             branches:
               only: master
