@@ -1,0 +1,15 @@
+sudo: required
+
+env:
+  global:
+    - CHANGE_MINIKUBE_NONE_USER=true
+    - K8S_VERSION="v1.10.0"
+    - MINIKUBE_VERSION="v0.28.2"
+
+
+script:
+  - ./test/e2e-minikube.sh
+  # Create example Redis deployment on Kubernetes.
+  - kubectl cluster-info
+  - kubectl run travis-example --image=redis
+  - kubectl get deployment
